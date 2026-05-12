@@ -1,61 +1,74 @@
 const express = require("express");
+const fs = require("fs");
+const csv = require("csv-parser");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 🚆 Simulazione realistica treni Pieve Emanuele → Milano
-const treni = [
-  { ora: "12:05", ritardo: 0 },
-  { ora: "12:20", ritardo: 2 },
-  { ora: "12:35", ritardo: 0 },
-  { ora: "12:50", ritardo: 5 },
-  { ora: "13:05", ritardo: 0 },
-  { ora: "13:20", ritardo: 3 },
-  { ora: "13:35", ritardo: 0 },
-  { ora: "13:50", ritardo: 1 }
-];
+const STOP_ID = "S01104";
+
+let stopTimes = [];
+
+// 📥 carica GTFS
+function loadGTFS() {
+  return new Promise((resolve) => {
+    const results = [];
+
+    fs.createReadStream("./gtfs/stop_times.txt")
+      .pipe(csv())
+      .on("data", (data) => results.push(data))
+      .on("end", () => {
+        stopTimes = results;
+        resolve();
+      });
+  });
+}
+
+// 🧠 calcolo prossimo treno reale
+function getNextTrain() {
+  const now = new Date(
+    new Date().toLocaleString("en-US", { timeZone: "Europe/Rome" })
+  );
+
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+  const filtered = stopTimes.filter((s) => s.stop_id === STOP_ID);
+
+  const future = filtered
+    .map((s) => {
+      if (!s.arrival_time) return null;
+
+      const [h, m] = s.arrival_time.split(":");
+      const minutes = parseInt(h) * 60 + parseInt(m);
+
+      return {
+        time: s.arrival_time,
+        minutes
+      };
+    })
+    .filter(Boolean)
+    .filter((t) => t.minutes >= currentMinutes)
+    .sort((a, b) => a.minutes - b.minutes);
+
+  return future[0];
+}
 
 app.get("/treno", (req, res) => {
-  try {
-    const now = new Date();
-    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const next = getNextTrain();
 
-    let prossimo = null;
-
-    for (const t of treni) {
-      const [h, m] = t.ora.split(":").map(Number);
-      const minutes = h * 60 + m;
-
-      if (minutes >= currentMinutes) {
-        prossimo = t;
-        break;
-      }
-    }
-
-    if (!prossimo) {
-      return res.json({
-        speech: "Non ci sono altri treni per Milano oggi"
-      });
-    }
-
+  if (!next) {
     return res.json({
-      speech: `Il prossimo treno per Milano parte alle ${prossimo.ora} e ha ${prossimo.ritardo} minuti di ritardo`
-    });
-
-  } catch (err) {
-    console.error("Errore server:", err);
-
-    return res.json({
-      speech: "Errore nel calcolo del prossimo treno"
+      speech: "Non ci sono più treni disponibili oggi"
     });
   }
+
+  return res.json({
+    speech: `Il prossimo treno per Milano parte alle ${next.time}`
+  });
 });
 
-// endpoint test base
-app.get("/", (req, res) => {
-  res.send("API treni attiva 🚆");
-});
-
-app.listen(PORT, () => {
-  console.log("Server attivo sulla porta " + PORT);
+loadGTFS().then(() => {
+  app.listen(PORT, () => {
+    console.log("GTFS server attivo su porta " + PORT);
+  });
 });

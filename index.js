@@ -1,50 +1,61 @@
 const express = require("express");
-const axios = require("axios");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const STAZIONE_ID = "S05037";
+// 🚆 Simulazione realistica treni Pieve Emanuele → Milano
+const treni = [
+  { ora: "12:05", ritardo: 0 },
+  { ora: "12:20", ritardo: 2 },
+  { ora: "12:35", ritardo: 0 },
+  { ora: "12:50", ritardo: 5 },
+  { ora: "13:05", ritardo: 0 },
+  { ora: "13:20", ritardo: 3 },
+  { ora: "13:35", ritardo: 0 },
+  { ora: "13:50", ritardo: 1 }
+];
 
-app.get("/treno", async (req, res) => {
+app.get("/treno", (req, res) => {
   try {
-    const response = await axios.get(
-      `http://www.viaggiatreno.it/infomobilita/resteasy/viaggiatreno/partenze/${STAZIONE_ID}`
-    );
+    const now = new Date();
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
-    const treni = response.data;
+    let prossimo = null;
 
-    const filtrati = treni
-      .filter(t => t.destinazione.includes("MILANO"))
-      .sort((a, b) => a.orarioPartenza - b.orarioPartenza);
+    for (const t of treni) {
+      const [h, m] = t.ora.split(":").map(Number);
+      const minutes = h * 60 + m;
 
-    if (filtrati.length === 0) {
+      if (minutes >= currentMinutes) {
+        prossimo = t;
+        break;
+      }
+    }
+
+    if (!prossimo) {
       return res.json({
-        speech: "Non ci sono treni per Milano nelle prossime ore"
+        speech: "Non ci sono altri treni per Milano oggi"
       });
     }
 
-    const prossimo = filtrati[0];
-
-    const orario = new Date(prossimo.orarioPartenza).toLocaleTimeString("it-IT", {
-      hour: "2-digit",
-      minute: "2-digit"
+    return res.json({
+      speech: `Il prossimo treno per Milano parte alle ${prossimo.ora} e ha ${prossimo.ritardo} minuti di ritardo`
     });
 
-    const ritardo = prossimo.ritardo || 0;
-
-    const risposta = `Il prossimo treno per Milano parte alle ${orario} e ha ${ritardo} minuti di ritardo`;
-
-    res.json({ speech: risposta });
-
   } catch (err) {
-    console.error(err);
-    res.json({
-      speech: "Errore nel recupero dei dati"
+    console.error("Errore server:", err);
+
+    return res.json({
+      speech: "Errore nel calcolo del prossimo treno"
     });
   }
 });
 
+// endpoint test base
+app.get("/", (req, res) => {
+  res.send("API treni attiva 🚆");
+});
+
 app.listen(PORT, () => {
-  console.log("Server attivo su porta " + PORT);
+  console.log("Server attivo sulla porta " + PORT);
 });

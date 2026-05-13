@@ -4,118 +4,99 @@ const axios = require("axios");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const STATION = "S01738"; // 👈 preso dal tuo dataset (uno valido)
+// 👉 GTFS Lombardia (TUO FILE locale)
+let stopTimes = [];
+let trips = [];
 
-// 🚆 prendi partenze REALI dalla stazione
-async function getDepartures() {
-  const res = await axios.get(
-    `http://www.viaggiatreno.it/infomobilita/resteasy/viaggiatreno/partenze/${STATION}`,
-    { timeout: 8000 }
-  );
+// 🧠 STAZIONE CORRETTA (dal tuo debug)
+const STOP_ID = "S01738";
 
-  return res.data;
-}
-
-// 🧠 prossimo treno
-function pickNext(data) {
+// --------------------
+// 🚆 prossimo treno
+// --------------------
+function getNextTrain() {
   const now = new Date(
     new Date().toLocaleString("it-IT", { timeZone: "Europe/Rome" })
   );
 
   const current = now.getHours() * 60 + now.getMinutes();
 
-  const list = data
-    .map(t => {
-      const time = t.oraPartenza || t.orarioPartenza;
-
-      if (!time) return null;
-
-      const [h, m] = time.split(":").map(Number);
+  const list = stopTimes
+    .filter(s => (s.stop_id || "").trim() === STOP_ID)
+    .map(s => {
+      const [h, m] = s.arrival_time.split(":").map(Number);
 
       return {
-        time,
+        time: s.arrival_time,
         minutes: h * 60 + m,
-        numeroTreno: t.numeroTreno,
-        destinazione: t.destinazione
+        trip_id: s.trip_id
       };
     })
-    .filter(Boolean)
     .filter(t => t.minutes >= current)
     .sort((a, b) => a.minutes - b.minutes);
 
   return list[0];
 }
 
-// ⏱️ ritardo reale
+// --------------------
+// 🚆 numero treno
+// --------------------
+function getTrainNumber(trip_id) {
+  const trip = trips.find(t => t.trip_id === trip_id);
+  if (!trip) return null;
+
+  const match = (trip.trip_headsign || "").match(/(\d+)/);
+  return match ? match[1] : null;
+}
+
+// --------------------
+// ⏱️ ritardo reale (fallback affidabile)
+// --------------------
 async function getDelay(num) {
   try {
     if (!num) return 0;
 
     const res = await axios.get(
       `http://www.viaggiatreno.it/infomobilita/resteasy/viaggiatreno/cercaNumeroTreno/${num}`,
-      { timeout: 8000 }
+      { timeout: 10000 }
     );
 
     return res.data?.ritardo || 0;
+
   } catch (e) {
+    console.log("delay error:", e.message);
     return 0;
   }
 }
 
-app.get("/debug-http", async (req, res) => {
-  try {
-    const r = await axios.get(
-      "http://www.viaggiatreno.it/infomobilita/resteasy/viaggiatreno/partenze/S01738",
-      {
-        timeout: 15000,
-        headers: {
-          "User-Agent": "Mozilla/5.0"
-        }
-      }
-    );
-
-    res.json({
-      type: typeof r.data,
-      preview: r.data
-    });
-
-  } catch (e) {
-    res.json({
-      error: e.message
-    });
-  }
-});
-
+// --------------------
 // 🚆 API
+// --------------------
 app.get("/treno", async (req, res) => {
   try {
-    const data = await getDepartures();
-
-    const next = pickNext(data);
+    const next = getNextTrain();
 
     if (!next) {
-      return res.json({
-        speech: "Nessun treno disponibile al momento"
-      });
+      return res.json({ speech: "Nessun treno trovato" });
     }
 
-    const ritardo = await getDelay(next.numeroTreno);
+    const num = getTrainNumber(next.trip_id);
+    const delay = await getDelay(num);
 
     let speech = `Il prossimo treno per Milano parte alle ${next.time}`;
 
-    speech += ritardo
-      ? ` ed ha ${ritardo} minuti di ritardo`
+    speech += delay > 0
+      ? ` ed ha ${delay} minuti di ritardo`
       : " ed è in orario";
 
-    return res.json({ speech });
+    res.json({ speech });
 
-  } catch (err) {
-    return res.json({
-      speech: "Errore nel recupero dati treni"
-    });
+  } catch (e) {
+    console.log(e.message);
+    res.json({ speech: "Errore sistema treni" });
   }
 });
 
 app.listen(PORT, () => {
-  console.log("Server attivo");
+  console.log("🚆 Server attivo");
 });

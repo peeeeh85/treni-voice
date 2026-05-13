@@ -105,6 +105,14 @@ app.get("/find-milano", (req, res) => {
   res.json(matches.slice(0, 100));
 });
 
+app.get("/destinations", (req, res) => {
+  const list = [...new Set(
+    trips.map(t => t.trip_headsign).filter(Boolean)
+  )];
+
+  res.json(list);
+});
+
 app.listen(PORT, () => {
   console.log("🚆 Server attivo");
 });

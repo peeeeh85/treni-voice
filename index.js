@@ -107,6 +107,15 @@ async function getDelay(num) {
   }
 }
 
+app.get("/debug", (req, res) => {
+  const sample = stopTimes.slice(0, 20);
+
+  res.json({
+    total: stopTimes.length,
+    sample
+  });
+});
+
 // 🚆 API
 app.get("/treno", async (req, res) => {
   try {

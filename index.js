@@ -4,49 +4,52 @@ const axios = require("axios");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const PIEVE = "S01738";
-const NEXT_STOP_MILANO_DIR = "S01724"; // Locate Triulzi (dal tuo sample)
+const PIEVE = "S01104";
+const LOCATE = "S01801";
 
 let stopTimes = [];
 let trips = [];
 
-// 🧠 costruisce mappa viaggi
+// 🧠 costruisce mappa trip → stops ordinati
 function buildTrips() {
   const map = {};
 
   for (const s of stopTimes) {
     if (!map[s.trip_id]) map[s.trip_id] = [];
-    map[s.trip_id].push(s);
+
+    map[s.trip_id].push({
+      stop_id: s.stop_id,
+      time: s.arrival_time
+    });
   }
 
   return map;
 }
 
-// 🚆 trova direzione giusta (Pieve → Locate)
+// 🚆 trova trip validi Pieve → Locate
 function getValidTrips() {
   const grouped = buildTrips();
   const valid = [];
 
   for (const [trip_id, stops] of Object.entries(grouped)) {
     const pieve = stops.find(s => s.stop_id === PIEVE);
-    const locate = stops.find(s => s.stop_id === NEXT_STOP_MILANO_DIR);
+    const locate = stops.find(s => s.stop_id === LOCATE);
 
     if (!pieve || !locate) continue;
 
-    const [ph, pm] = pieve.arrival_time.split(":").map(Number);
-    const [lh, lm] = locate.arrival_time.split(":").map(Number);
+    const [ph, pm] = pieve.time.split(":").map(Number);
+    const [lh, lm] = locate.time.split(":").map(Number);
 
     const pMin = ph * 60 + pm;
     const lMin = lh * 60 + lm;
 
-    // deve andare avanti nel tempo (direzione giusta)
+    // deve essere direzione corretta
     if (lMin <= pMin) continue;
 
     valid.push({
       trip_id,
       departure: pMin,
-      arrival: lMin,
-      departure_time: pieve.arrival_time
+      departure_time: pieve.time
     });
   }
 
@@ -79,20 +82,7 @@ async function getDelay(trip_id) {
     return 0;
   }
 }
-app.get("/debug-direct", (req, res) => {
-  const result = [];
 
-  for (const s of stopTimes) {
-    if (s.stop_id === "S01738") {
-      result.push({
-        trip_id: s.trip_id,
-        time: s.arrival_time
-      });
-    }
-  }
-
-  res.json(result.slice(0, 50));
-});
 // 🚆 API
 app.get("/treno", async (req, res) => {
   try {
@@ -100,13 +90,13 @@ app.get("/treno", async (req, res) => {
 
     if (!next) {
       return res.json({
-        speech: "Nessun treno in direzione Milano trovato"
+        speech: "Nessun treno Pieve → Locate trovato"
       });
     }
 
     const delay = await getDelay(next.trip_id);
 
-    let speech = `Il prossimo treno da Pieve Emanuele verso Milano parte alle ${next.departure_time}`;
+    let speech = `Il prossimo treno da Pieve Emanuele a Locate Triulzi parte alle ${next.departure_time}`;
 
     speech += delay > 0
       ? ` ed ha ${delay} minuti di ritardo`

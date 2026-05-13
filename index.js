@@ -12,7 +12,7 @@ async function getTrains() {
   const url = `http://www.viaggiatreno.it/infomobilita/resteasy/viaggiatreno/dettaglioViaggio/${ORIGINE}/${DESTINAZIONE}`;
 
   const res = await axios.get(url, {
-    timeout: 10000,
+    timeout: 50000,
     headers: {
       "User-Agent": "Mozilla/5.0"
     }
@@ -23,32 +23,51 @@ async function getTrains() {
 
 // 🧠 prendi prossimo treno valido
 function pickNext(trains) {
-  const now = Date.now();
+  const now = new Date(
+    new Date().toLocaleString("it-IT", { timeZone: "Europe/Rome" })
+  );
+
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
   return trains
-    .filter(t => t.dataPartenzaTreno && t.dataPartenzaTreno >= now)
-    .sort((a, b) => a.dataPartenzaTreno - b.dataPartenzaTreno)[0];
+    .map(t => {
+      const [h, m] = (t.compOrarioPartenza || "").split(":").map(Number);
+
+      if (isNaN(h) || isNaN(m)) return null;
+
+      return {
+        ...t,
+        minutes: h * 60 + m
+      };
+    })
+    .filter(Boolean)
+    .filter(t => t.minutes >= currentMinutes)
+    .sort((a, b) => a.minutes - b.minutes)[0];
 }
 
 // 🚆 API
 app.get("/treno", async (req, res) => {
   try {
-    const data = await getTrains();
+    const url =
+      "http://www.viaggiatreno.it/infomobilita/resteasy/viaggiatreno/dettaglioViaggio/S01104/S01801";
 
-    if (!data || data.length === 0) {
+    const response = await axios.get(url, { timeout: 10000 });
+
+    const trains = response.data;
+
+    if (!Array.isArray(trains) || trains.length === 0) {
       return res.json({ speech: "Nessun treno disponibile" });
     }
 
-    const next = pickNext(data);
+    const next = pickNext(trains);
 
     if (!next) {
       return res.json({ speech: "Nessun treno futuro trovato" });
     }
 
-    const departure = next.compOrarioPartenza;
     const delay = next.ritardo || 0;
 
-    let speech = `Il prossimo treno da Pieve Emanuele a Locate Triulzi è previsto alle ${departure}`;
+    let speech = `Il prossimo treno da Pieve Emanuele a Locate Triulzi è previsto alle ${next.compOrarioPartenza}`;
 
     speech += delay > 0
       ? ` ed ha un ritardo di ${delay} minuti`

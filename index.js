@@ -97,6 +97,14 @@ app.get("/treno", async (req, res) => {
   }
 });
 
+app.get("/find-milano", (req, res) => {
+  const matches = stopTimes.filter(s =>
+    (s.stop_id || "").includes("017")
+  );
+
+  res.json(matches.slice(0, 100));
+});
+
 app.listen(PORT, () => {
   console.log("🚆 Server attivo");
 });

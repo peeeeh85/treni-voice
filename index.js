@@ -23,18 +23,43 @@ async function getTrains() {
 
 // 🧠 prendi prossimo treno valido
 function pickNext(trains) {
-  const now = Date.now();
-
-  const future = trains.filter(t =>
-    t.dataPartenzaTreno && t.dataPartenzaTreno >= now
+  const now = new Date(
+    new Date().toLocaleString("it-IT", { timeZone: "Europe/Rome" })
   );
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
-  const base = future.length ? future : trains;
-
-  return base
+  const sorted = trains
     .slice()
-    .sort((a, b) => a.dataPartenzaTreno - b.dataPartenzaTreno)[0];
+    .sort((a, b) =>
+      (a.dataPartenzaTreno || 0) - (b.dataPartenzaTreno || 0)
+    );
+
+  for (let i = 0; i < sorted.length; i++) {
+    const t = sorted[i];
+
+    const timeMin = toMinutes(t.compOrarioPartenzaZeroEffettivo);
+
+    if (timeMin === null) continue;
+
+    // ❗ tua regola di filtro
+    const isTooEarly = timeMin <= currentMinutes && t.ritardo === 0;
+
+    if (isTooEarly) {
+      continue; // scarta e vai al prossimo
+    }
+
+    return t;
+  }
+
+  return null;
 }
+
+function toMinutes(hhmm) {
+  if (!hhmm) return null;
+  const [h, m] = hhmm.split(":").map(Number);
+  return h * 60 + m;
+}
+
 
 // 🚆 API
 app.get("/treno", async (req, res) => {

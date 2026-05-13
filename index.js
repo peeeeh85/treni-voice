@@ -4,59 +4,56 @@ const axios = require("axios");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const STOP_PIEVE = "S01738";   // dal tuo GTFS
-const STOP_ROGOREDO = "S01820";
+const PIEVE = "S01738";
+const NEXT_STOP_MILANO_DIR = "S01724"; // Locate Triulzi (dal tuo sample)
 
 let stopTimes = [];
 let trips = [];
 
-// 🧠 trova tutti i trip validi Pieve → Rogoredo
-function getValidTrips() {
-  const grouped = {};
+// 🧠 costruisce mappa viaggi
+function buildTrips() {
+  const map = {};
 
   for (const s of stopTimes) {
-    if (!grouped[s.trip_id]) grouped[s.trip_id] = [];
-
-    grouped[s.trip_id].push({
-      stop_id: s.stop_id,
-      time: s.arrival_time
-    });
+    if (!map[s.trip_id]) map[s.trip_id] = [];
+    map[s.trip_id].push(s);
   }
 
+  return map;
+}
+
+// 🚆 trova direzione giusta (Pieve → Locate)
+function getValidTrips() {
+  const grouped = buildTrips();
   const valid = [];
 
   for (const [trip_id, stops] of Object.entries(grouped)) {
-    const hasPieve = stops.find(s => s.stop_id === STOP_PIEVE);
-    const hasRogo = stops.find(s => s.stop_id === STOP_ROGOREDO);
+    const pieve = stops.find(s => s.stop_id === PIEVE);
+    const locate = stops.find(s => s.stop_id === NEXT_STOP_MILANO_DIR);
 
-    if (!hasPieve || !hasRogo) continue;
+    if (!pieve || !locate) continue;
 
-    const t1 = hasPieve.time;
-    const t2 = hasRogo.time;
+    const [ph, pm] = pieve.arrival_time.split(":").map(Number);
+    const [lh, lm] = locate.arrival_time.split(":").map(Number);
 
-    if (!t1 || !t2) continue;
+    const pMin = ph * 60 + pm;
+    const lMin = lh * 60 + lm;
 
-    const [h1, m1] = t1.split(":").map(Number);
-    const [h2, m2] = t2.split(":").map(Number);
-
-    const min1 = h1 * 60 + m1;
-    const min2 = h2 * 60 + m2;
-
-    // deve andare Pieve → Rogoredo (ordine corretto)
-    if (min2 <= min1) continue;
+    // deve andare avanti nel tempo (direzione giusta)
+    if (lMin <= pMin) continue;
 
     valid.push({
       trip_id,
-      departure: min1,
-      arrival: min2,
-      departure_time: t1
+      departure: pMin,
+      arrival: lMin,
+      departure_time: pieve.arrival_time
     });
   }
 
   return valid;
 }
 
-// 🧠 prossimo treno reale
+// 🚆 prossimo treno
 function getNextTrain() {
   const now = new Date(
     new Date().toLocaleString("it-IT", { timeZone: "Europe/Rome" })
@@ -64,14 +61,12 @@ function getNextTrain() {
 
   const current = now.getHours() * 60 + now.getMinutes();
 
-  const valid = getValidTrips()
+  return getValidTrips()
     .filter(t => t.departure >= current)
-    .sort((a, b) => a.departure - b.departure);
-
-  return valid[0];
+    .sort((a, b) => a.departure - b.departure)[0];
 }
 
-// 🚆 ritardo reale (ViaggiaTreno)
+// ⏱️ ritardo reale
 async function getDelay(trip_id) {
   try {
     const res = await axios.get(
@@ -92,13 +87,13 @@ app.get("/treno", async (req, res) => {
 
     if (!next) {
       return res.json({
-        speech: "Nessun treno Pieve → Rogoredo trovato"
+        speech: "Nessun treno in direzione Milano trovato"
       });
     }
 
     const delay = await getDelay(next.trip_id);
 
-    let speech = `Il prossimo treno per Milano Rogoredo parte alle ${next.departure_time}`;
+    let speech = `Il prossimo treno da Pieve Emanuele verso Milano parte alle ${next.departure_time}`;
 
     speech += delay > 0
       ? ` ed ha ${delay} minuti di ritardo`
@@ -111,4 +106,6 @@ app.get("/treno", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log("Server attivo"));
+app.listen(PORT, () => {
+  console.log("🚆 Server attivo");
+});

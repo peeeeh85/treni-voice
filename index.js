@@ -23,26 +23,17 @@ async function getTrains() {
 
 // 🧠 prendi prossimo treno valido
 function pickNext(trains) {
-  const now = new Date(
-    new Date().toLocaleString("it-IT", { timeZone: "Europe/Rome" })
+  const now = Date.now();
+
+  const future = trains.filter(t =>
+    t.dataPartenzaTreno && t.dataPartenzaTreno >= now
   );
 
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const base = future.length ? future : trains;
 
-  return trains
-    .map(t => {
-      const [h, m] = (t.compOrarioPartenza || "").split(":").map(Number);
-
-      if (isNaN(h) || isNaN(m)) return null;
-
-      return {
-        ...t,
-        minutes: h * 60 + m
-      };
-    })
-    .filter(Boolean)
-    .filter(t => t.minutes >= currentMinutes)
-    .sort((a, b) => a.minutes - b.minutes)[0];
+  return base
+    .slice()
+    .sort((a, b) => a.dataPartenzaTreno - b.dataPartenzaTreno)[0];
 }
 
 // 🚆 API

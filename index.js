@@ -4,108 +4,61 @@ const axios = require("axios");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const PIEVE = "S01104";
-const LOCATE = "S01801";
+const ORIGINE = "S01104";     // Pieve Emanuele
+const DESTINAZIONE = "S01801"; // Locate Triulzi
 
-let stopTimes = [];
-let trips = [];
+// 🚆 prendi lista treni già pronta da ViaggiaTreno
+async function getTrains() {
+  const url = `http://www.viaggiatreno.it/infomobilita/resteasy/viaggiatreno/dettaglioViaggio/${ORIGINE}/${DESTINAZIONE}`;
 
-// 🧠 costruisce mappa trip → stops ordinati
-function buildTrips() {
-  const map = {};
+  const res = await axios.get(url, {
+    timeout: 10000,
+    headers: {
+      "User-Agent": "Mozilla/5.0"
+    }
+  });
 
-  for (const s of stopTimes) {
-    if (!map[s.trip_id]) map[s.trip_id] = [];
-
-    map[s.trip_id].push({
-      stop_id: s.stop_id,
-      time: s.arrival_time
-    });
-  }
-
-  return map;
+  return res.data;
 }
 
-// 🚆 trova trip validi Pieve → Locate
-function getValidTrips() {
-  const grouped = buildTrips();
-  const valid = [];
+// 🧠 prendi prossimo treno valido
+function pickNext(trains) {
+  const now = Date.now();
 
-  for (const [trip_id, stops] of Object.entries(grouped)) {
-    const pieve = stops.find(s => s.stop_id === PIEVE);
-    const locate = stops.find(s => s.stop_id === LOCATE);
-
-    if (!pieve || !locate) continue;
-
-    const [ph, pm] = pieve.time.split(":").map(Number);
-    const [lh, lm] = locate.time.split(":").map(Number);
-
-    const pMin = ph * 60 + pm;
-    const lMin = lh * 60 + lm;
-
-    // deve essere direzione corretta
-    if (lMin <= pMin) continue;
-
-    valid.push({
-      trip_id,
-      departure: pMin,
-      departure_time: pieve.time
-    });
-  }
-
-  return valid;
-}
-
-// 🚆 prossimo treno
-function getNextTrain() {
-  const now = new Date(
-    new Date().toLocaleString("it-IT", { timeZone: "Europe/Rome" })
-  );
-
-  const current = now.getHours() * 60 + now.getMinutes();
-
-  return getValidTrips()
-    .filter(t => t.departure >= current)
-    .sort((a, b) => a.departure - b.departure)[0];
-}
-
-// ⏱️ ritardo reale
-async function getDelay(trip_id) {
-  try {
-    const res = await axios.get(
-      `http://www.viaggiatreno.it/infomobilita/resteasy/viaggiatreno/cercaNumeroTreno/${trip_id}`,
-      { timeout: 10000 }
-    );
-
-    return res.data?.ritardo || 0;
-  } catch {
-    return 0;
-  }
+  return trains
+    .filter(t => t.dataPartenzaTreno && t.dataPartenzaTreno >= now)
+    .sort((a, b) => a.dataPartenzaTreno - b.dataPartenzaTreno)[0];
 }
 
 // 🚆 API
 app.get("/treno", async (req, res) => {
   try {
-    const next = getNextTrain();
+    const data = await getTrains();
 
-    if (!next) {
-      return res.json({
-        speech: "Nessun treno Pieve → Locate trovato"
-      });
+    if (!data || data.length === 0) {
+      return res.json({ speech: "Nessun treno disponibile" });
     }
 
-    const delay = await getDelay(next.trip_id);
+    const next = pickNext(data);
 
-    let speech = `Il prossimo treno da Pieve Emanuele a Locate Triulzi parte alle ${next.departure_time}`;
+    if (!next) {
+      return res.json({ speech: "Nessun treno futuro trovato" });
+    }
+
+    const departure = next.compOrarioPartenza;
+    const delay = next.ritardo || 0;
+
+    let speech = `Il prossimo treno da Pieve Emanuele a Locate Triulzi è previsto alle ${departure}`;
 
     speech += delay > 0
-      ? ` ed ha ${delay} minuti di ritardo`
+      ? ` ed ha un ritardo di ${delay} minuti`
       : " ed è in orario";
 
     res.json({ speech });
 
   } catch (e) {
-    res.json({ speech: "Errore sistema treni" });
+    console.log(e.message);
+    res.json({ speech: "Errore nel recupero dati treni" });
   }
 });
 

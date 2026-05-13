@@ -59,27 +59,33 @@ function getNextTrain() {
 
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
-  const allStops = stopTimes
+  const candidates = stopTimes
     .filter((s) => s.stop_id === STOP_ID && s.arrival_time)
     .map((s) => {
       const [h, m] = s.arrival_time.split(":").map(Number);
 
-      const minutes = (h % 24) * 60 + m + (h >= 24 ? 1440 : 0);
+      // 🔥 normalizzazione intelligente GTFS
+      let minutes = h * 60 + m;
+
+      // se oltre 24h → giorno dopo
+      if (h >= 24) {
+        minutes = (h - 24) * 60 + m + 1440;
+      }
 
       return {
         time: s.arrival_time,
         minutes,
         trip_id: s.trip_id
       };
-    });
+    })
+    .filter((t) => {
+      // 🔥 elimina roba assurda (più di 18h nel futuro)
+      const diff = t.minutes - currentMinutes;
+      return diff >= 0 && diff < 18 * 60;
+    })
+    .sort((a, b) => a.minutes - b.minutes);
 
-  // 🔥 ORDINA TUTTO PRIMA
-  const sorted = allStops.sort((a, b) => a.minutes - b.minutes);
-
-  // 🔥 trova primo treno FUTURO reale
-  const next = sorted.find((t) => t.minutes >= currentMinutes);
-
-  return next || sorted[0];
+  return candidates[0];
 }
 
 // 🔍 estrai numero treno da headsign

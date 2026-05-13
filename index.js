@@ -1,47 +1,19 @@
 const express = require("express");
 const fs = require("fs");
 const csv = require("csv-parser");
+const axios = require("axios");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// 🚉 Pieve Emanuele
 const STOP_ID = "S01104";
 
 let stopTimes = [];
+let trips = [];
 
-const axios = require("axios");
-
-// 🧠 esempio: estrai numero treno dal trip_id
-function extractTrainNumber(tripId) {
-  // dipende dal GTFS, esempio semplice:
-  return tripId.replace(/\D/g, "").slice(0, 5);
-}
-
-async function getDelay(tripId) {
-  try {
-    const numeroTreno = extractTrainNumber(tripId);
-
-    const response = await axios.get(
-      `http://www.viaggiatreno.it/infomobilita/resteasy/viaggiatreno/cercaNumeroTreno/${numeroTreno}`,
-      {
-        timeout: 8000
-      }
-    );
-
-    const data = response.data;
-
-    if (!data || !data.ritardo) return 0;
-
-    return data.ritardo;
-
-  } catch (err) {
-    console.log("Errore ritardo:", err.message);
-    return 0;
-  }
-}
-
-// 📥 carica GTFS
-function loadGTFS() {
+// 📥 carica stop_times
+function loadStopTimes() {
   return new Promise((resolve) => {
     const results = [];
 
@@ -50,15 +22,32 @@ function loadGTFS() {
       .on("data", (data) => results.push(data))
       .on("end", () => {
         stopTimes = results;
+        console.log("stop_times caricati:", stopTimes.length);
         resolve();
       });
   });
 }
 
-// 🧠 calcolo prossimo treno reale
+// 📥 carica trips
+function loadTrips() {
+  return new Promise((resolve) => {
+    const results = [];
+
+    fs.createReadStream("./gtfs/trips.txt")
+      .pipe(csv())
+      .on("data", (data) => results.push(data))
+      .on("end", () => {
+        trips = results;
+        console.log("trips caricati:", trips.length);
+        resolve();
+      });
+  });
+}
+
+// 🧠 trova prossimo treno
 function getNextTrain() {
   const now = new Date(
-    new Date().toLocaleString("en-US", { timeZone: "Europe/Rome" })
+    new Date().toLocaleString("it-IT", { timeZone: "Europe/Rome" })
   );
 
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
@@ -75,7 +64,7 @@ function getNextTrain() {
       return {
         time: s.arrival_time,
         minutes,
-		trip_id: s.trip_id
+        trip_id: s.trip_id
       };
     })
     .filter(Boolean)
@@ -85,6 +74,37 @@ function getNextTrain() {
   return future[0];
 }
 
+// 🔍 estrai numero treno reale da headsign
+function extractTrainNumber(tripInfo) {
+  if (!tripInfo || !tripInfo.trip_headsign) return null;
+
+  const match = tripInfo.trip_headsign.match(/(\d+)/);
+  return match ? match[1] : null;
+}
+
+// ⏱️ recupera ritardo reale
+async function getDelay(numeroTreno) {
+  try {
+    if (!numeroTreno) return 0;
+
+    const response = await axios.get(
+      `http://www.viaggiatreno.it/infomobilita/resteasy/viaggiatreno/cercaNumeroTreno/${numeroTreno}`,
+      { timeout: 8000 }
+    );
+
+    const data = response.data;
+
+    if (!data || !data.ritardo) return 0;
+
+    return data.ritardo;
+
+  } catch (err) {
+    console.log("Errore ritardo:", err.message);
+    return 0;
+  }
+}
+
+// 🚆 endpoint principale
 app.get("/treno", async (req, res) => {
   try {
     const next = getNextTrain();
@@ -95,10 +115,15 @@ app.get("/treno", async (req, res) => {
       });
     }
 
-    // 🔥 qui serve trip_id (devi salvarlo prima)
-    const tripId = next.trip_id;
+    // 🔗 collega trip_id → trip info
+    const tripInfo = trips.find(t => t.trip_id === next.trip_id);
 
-    const ritardo = await getDelay(tripId);
+    const numeroTreno = extractTrainNumber(tripInfo);
+
+    console.log("Trip ID:", next.trip_id);
+    console.log("Numero treno:", numeroTreno);
+
+    const ritardo = await getDelay(numeroTreno);
 
     let frase = `Il prossimo treno per Milano parte alle ${next.time}`;
 
@@ -111,14 +136,22 @@ app.get("/treno", async (req, res) => {
     return res.json({ speech: frase });
 
   } catch (err) {
+    console.error("Errore:", err);
+
     return res.json({
       speech: "Errore nel recupero dei dati"
     });
   }
 });
 
-loadGTFS().then(() => {
+// 🧪 test base
+app.get("/", (req, res) => {
+  res.send("API treni reale attiva 🚆");
+});
+
+// 🚀 avvio server
+Promise.all([loadStopTimes(), loadTrips()]).then(() => {
   app.listen(PORT, () => {
-    console.log("GTFS server attivo su porta " + PORT);
+    console.log("Server attivo su porta " + PORT);
   });
 });

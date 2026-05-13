@@ -4,16 +4,59 @@ const axios = require("axios");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 👉 GTFS Lombardia (TUO FILE locale)
+const STOP_PIEVE = "S01738";   // dal tuo GTFS
+const STOP_ROGOREDO = "S01820";
+
 let stopTimes = [];
 let trips = [];
 
-// 🧠 STAZIONE CORRETTA (dal tuo debug)
-const STOP_ID = "S01738";
+// 🧠 trova tutti i trip validi Pieve → Rogoredo
+function getValidTrips() {
+  const grouped = {};
 
-// --------------------
-// 🚆 prossimo treno
-// --------------------
+  for (const s of stopTimes) {
+    if (!grouped[s.trip_id]) grouped[s.trip_id] = [];
+
+    grouped[s.trip_id].push({
+      stop_id: s.stop_id,
+      time: s.arrival_time
+    });
+  }
+
+  const valid = [];
+
+  for (const [trip_id, stops] of Object.entries(grouped)) {
+    const hasPieve = stops.find(s => s.stop_id === STOP_PIEVE);
+    const hasRogo = stops.find(s => s.stop_id === STOP_ROGOREDO);
+
+    if (!hasPieve || !hasRogo) continue;
+
+    const t1 = hasPieve.time;
+    const t2 = hasRogo.time;
+
+    if (!t1 || !t2) continue;
+
+    const [h1, m1] = t1.split(":").map(Number);
+    const [h2, m2] = t2.split(":").map(Number);
+
+    const min1 = h1 * 60 + m1;
+    const min2 = h2 * 60 + m2;
+
+    // deve andare Pieve → Rogoredo (ordine corretto)
+    if (min2 <= min1) continue;
+
+    valid.push({
+      trip_id,
+      departure: min1,
+      arrival: min2,
+      departure_time: t1
+    });
+  }
+
+  return valid;
+}
+
+// 🧠 prossimo treno reale
 function getNextTrain() {
   const now = new Date(
     new Date().toLocaleString("it-IT", { timeZone: "Europe/Rome" })
@@ -21,69 +64,41 @@ function getNextTrain() {
 
   const current = now.getHours() * 60 + now.getMinutes();
 
-  const list = stopTimes
-    .filter(s => (s.stop_id || "").trim() === STOP_ID)
-    .map(s => {
-      const [h, m] = s.arrival_time.split(":").map(Number);
+  const valid = getValidTrips()
+    .filter(t => t.departure >= current)
+    .sort((a, b) => a.departure - b.departure);
 
-      return {
-        time: s.arrival_time,
-        minutes: h * 60 + m,
-        trip_id: s.trip_id
-      };
-    })
-    .filter(t => t.minutes >= current)
-    .sort((a, b) => a.minutes - b.minutes);
-
-  return list[0];
+  return valid[0];
 }
 
-// --------------------
-// 🚆 numero treno
-// --------------------
-function getTrainNumber(trip_id) {
-  const trip = trips.find(t => t.trip_id === trip_id);
-  if (!trip) return null;
-
-  const match = (trip.trip_headsign || "").match(/(\d+)/);
-  return match ? match[1] : null;
-}
-
-// --------------------
-// ⏱️ ritardo reale (fallback affidabile)
-// --------------------
-async function getDelay(num) {
+// 🚆 ritardo reale (ViaggiaTreno)
+async function getDelay(trip_id) {
   try {
-    if (!num) return 0;
-
     const res = await axios.get(
-      `http://www.viaggiatreno.it/infomobilita/resteasy/viaggiatreno/cercaNumeroTreno/${num}`,
+      `http://www.viaggiatreno.it/infomobilita/resteasy/viaggiatreno/cercaNumeroTreno/${trip_id}`,
       { timeout: 10000 }
     );
 
     return res.data?.ritardo || 0;
-
-  } catch (e) {
-    console.log("delay error:", e.message);
+  } catch {
     return 0;
   }
 }
 
-// --------------------
 // 🚆 API
-// --------------------
 app.get("/treno", async (req, res) => {
   try {
     const next = getNextTrain();
 
     if (!next) {
-      return res.json({ speech: "Nessun treno trovato" });
+      return res.json({
+        speech: "Nessun treno Pieve → Rogoredo trovato"
+      });
     }
 
-    const num = getTrainNumber(next.trip_id);
-    const delay = await getDelay(num);
+    const delay = await getDelay(next.trip_id);
 
-    let speech = `Il prossimo treno per Milano parte alle ${next.time}`;
+    let speech = `Il prossimo treno per Milano Rogoredo parte alle ${next.departure_time}`;
 
     speech += delay > 0
       ? ` ed ha ${delay} minuti di ritardo`
@@ -92,27 +107,8 @@ app.get("/treno", async (req, res) => {
     res.json({ speech });
 
   } catch (e) {
-    console.log(e.message);
     res.json({ speech: "Errore sistema treni" });
   }
 });
 
-app.get("/find-milano", (req, res) => {
-  const matches = stopTimes.filter(s =>
-    (s.stop_id || "").includes("017")
-  );
-
-  res.json(matches.slice(0, 100));
-});
-
-app.get("/destinations", (req, res) => {
-  const list = [...new Set(
-    trips.map(t => t.trip_headsign).filter(Boolean)
-  )];
-
-  res.json(list);
-});
-
-app.listen(PORT, () => {
-  console.log("🚆 Server attivo");
-});
+app.listen(PORT, () => console.log("Server attivo"));

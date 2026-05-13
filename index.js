@@ -44,6 +44,13 @@ function loadTrips() {
   });
 }
 
+// 🧠 converte orario GTFS → minuti (gestisce oltre 24h)
+function timeToMinutes(gtfsTime) {
+  const [h, m] = gtfsTime.split(":").map(Number);
+
+  return (h % 24) * 60 + m + (h >= 24 ? 1440 : 0);
+}
+
 // 🧠 trova prossimo treno
 function getNextTrain() {
   const now = new Date(
@@ -58,12 +65,9 @@ function getNextTrain() {
     .map((s) => {
       if (!s.arrival_time) return null;
 
-      const [h, m] = s.arrival_time.split(":");
-      const minutes = parseInt(h) * 60 + parseInt(m);
-
       return {
         time: s.arrival_time,
-        minutes,
+        minutes: timeToMinutes(s.arrival_time),
         trip_id: s.trip_id
       };
     })
@@ -71,10 +75,18 @@ function getNextTrain() {
     .filter((t) => t.minutes >= currentMinutes)
     .sort((a, b) => a.minutes - b.minutes);
 
+  // fallback se non trova nulla oggi
+  if (!future.length && filtered.length) {
+    return {
+      time: filtered[0].arrival_time,
+      trip_id: filtered[0].trip_id
+    };
+  }
+
   return future[0];
 }
 
-// 🔍 estrai numero treno reale da headsign
+// 🔍 estrai numero treno da headsign
 function extractTrainNumber(tripInfo) {
   if (!tripInfo || !tripInfo.trip_headsign) return null;
 
@@ -115,7 +127,6 @@ app.get("/treno", async (req, res) => {
       });
     }
 
-    // 🔗 collega trip_id → trip info
     const tripInfo = trips.find(t => t.trip_id === next.trip_id);
 
     const numeroTreno = extractTrainNumber(tripInfo);

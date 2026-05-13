@@ -59,31 +59,27 @@ function getNextTrain() {
 
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
-  const filtered = stopTimes.filter((s) => s.stop_id === STOP_ID);
-
-  const future = filtered
+  const allStops = stopTimes
+    .filter((s) => s.stop_id === STOP_ID && s.arrival_time)
     .map((s) => {
-      if (!s.arrival_time) return null;
+      const [h, m] = s.arrival_time.split(":").map(Number);
+
+      const minutes = (h % 24) * 60 + m + (h >= 24 ? 1440 : 0);
 
       return {
         time: s.arrival_time,
-        minutes: timeToMinutes(s.arrival_time),
+        minutes,
         trip_id: s.trip_id
       };
-    })
-    .filter(Boolean)
-    .filter((t) => t.minutes >= currentMinutes)
-    .sort((a, b) => a.minutes - b.minutes);
+    });
 
-  // fallback se non trova nulla oggi
-  if (!future.length && filtered.length) {
-    return {
-      time: filtered[0].arrival_time,
-      trip_id: filtered[0].trip_id
-    };
-  }
+  // 🔥 ORDINA TUTTO PRIMA
+  const sorted = allStops.sort((a, b) => a.minutes - b.minutes);
 
-  return future[0];
+  // 🔥 trova primo treno FUTURO reale
+  const next = sorted.find((t) => t.minutes >= currentMinutes);
+
+  return next || sorted[0];
 }
 
 // 🔍 estrai numero treno da headsign

@@ -62,6 +62,30 @@ async function getDelay(num) {
   }
 }
 
+app.get("/debug-http", async (req, res) => {
+  try {
+    const r = await axios.get(
+      "http://www.viaggiatreno.it/infomobilita/resteasy/viaggiatreno/partenze/S01738",
+      {
+        timeout: 15000,
+        headers: {
+          "User-Agent": "Mozilla/5.0"
+        }
+      }
+    );
+
+    res.json({
+      type: typeof r.data,
+      preview: r.data
+    });
+
+  } catch (e) {
+    res.json({
+      error: e.message
+    });
+  }
+});
+
 // 🚆 API
 app.get("/treno", async (req, res) => {
   try {

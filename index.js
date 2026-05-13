@@ -11,31 +11,44 @@ const STOP_ID = "S01104";
 let stopTimes = [];
 let trips = [];
 
-// 📥 GTFS stop_times
+// 📥 GTFS stop_times (NORMALIZZATO)
 function loadStopTimes() {
   return new Promise((resolve) => {
     const results = [];
 
     fs.createReadStream("./gtfs/stop_times.txt")
       .pipe(csv())
-      .on("data", (d) => results.push(d))
+      .on("data", (d) => {
+        results.push({
+          stop_id: (d.stop_id || "").trim(),
+          arrival_time: (d.arrival_time || "").trim(),
+          trip_id: (d.trip_id || "").trim()
+        });
+      })
       .on("end", () => {
         stopTimes = results;
+        console.log("stopTimes:", stopTimes.length);
         resolve();
       });
   });
 }
 
-// 📥 GTFS trips
+// 📥 GTFS trips (NORMALIZZATO)
 function loadTrips() {
   return new Promise((resolve) => {
     const results = [];
 
     fs.createReadStream("./gtfs/trips.txt")
       .pipe(csv())
-      .on("data", (d) => results.push(d))
+      .on("data", (d) => {
+        results.push({
+          trip_id: (d.trip_id || "").trim(),
+          trip_headsign: (d.trip_headsign || "").trim()
+        });
+      })
       .on("end", () => {
         trips = results;
+        console.log("trips:", trips.length);
         resolve();
       });
   });
@@ -47,7 +60,7 @@ function toMinutes(t) {
   return h * 60 + m;
 }
 
-// 🚆 prossimo treno (SOLO GTFS affidabile)
+// 🚆 prossimo treno
 function getNextTrain() {
   const now = new Date(
     new Date().toLocaleString("it-IT", { timeZone: "Europe/Rome" })
@@ -56,28 +69,24 @@ function getNextTrain() {
   const current = now.getHours() * 60 + now.getMinutes();
 
   const list = stopTimes
-    .filter(s => s.stop_id === STOP_ID && s.arrival_time)
-    .map(s => {
-      const minutes = toMinutes(s.arrival_time);
-
-      return {
-        time: s.arrival_time,
-        minutes,
-        trip_id: s.trip_id
-      };
-    })
+    .filter(s => s.stop_id === STOP_ID)
+    .map(s => ({
+      time: s.arrival_time,
+      minutes: toMinutes(s.arrival_time),
+      trip_id: s.trip_id
+    }))
     .filter(t => t.minutes >= current)
     .sort((a, b) => a.minutes - b.minutes);
 
   return list[0];
 }
 
-// 🔍 numero treno da GTFS trips
+// 🔍 numero treno
 function getTrainNumber(trip_id) {
   const trip = trips.find(t => t.trip_id === trip_id);
   if (!trip) return null;
 
-  const match = trip.trip_headsign?.match(/(\d+)/);
+  const match = trip.trip_headsign.match(/(\d+)/);
   return match ? match[1] : null;
 }
 
@@ -120,7 +129,7 @@ app.get("/treno", async (req, res) => {
     res.json({ speech });
 
   } catch (e) {
-    console.log(e.message);
+    console.log("ERROR:", e.message);
 
     res.json({ speech: "Errore nel sistema treni" });
   }

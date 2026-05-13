@@ -116,6 +116,16 @@ app.get("/debug", (req, res) => {
   });
 });
 
+app.get("/find/:id", (req, res) => {
+  const id = req.params.id.toLowerCase();
+
+  const matches = stopTimes.filter(s =>
+    s.stop_id.toLowerCase().includes(id)
+  );
+
+  res.json(matches.slice(0, 50));
+});
+
 // 🚆 API
 app.get("/treno", async (req, res) => {
   try {

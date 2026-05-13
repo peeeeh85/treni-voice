@@ -79,7 +79,20 @@ async function getDelay(trip_id) {
     return 0;
   }
 }
+app.get("/debug-direct", (req, res) => {
+  const result = [];
 
+  for (const s of stopTimes) {
+    if (s.stop_id === "S01738") {
+      result.push({
+        trip_id: s.trip_id,
+        time: s.arrival_time
+      });
+    }
+  }
+
+  res.json(result.slice(0, 50));
+});
 // 🚆 API
 app.get("/treno", async (req, res) => {
   try {

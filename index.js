@@ -1,172 +1,84 @@
 const express = require("express");
-const fs = require("fs");
-const csv = require("csv-parser");
 const axios = require("axios");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 🚉 Pieve Emanuele
-const STOP_ID = "S01104";
+const STATION = "S01104";
 
-let stopTimes = [];
-let trips = [];
+// 🚆 prendi treni REALI già con ritardo
+async function getNextTrain() {
+  const res = await axios.get(
+    `http://www.viaggiatreno.it/infomobilita/resteasy/viaggiatreno/partenze/${STATION}`
+  );
 
-// 📥 carica stop_times
-function loadStopTimes() {
-  return new Promise((resolve) => {
-    const results = [];
+  const data = res.data;
 
-    fs.createReadStream("./gtfs/stop_times.txt")
-      .pipe(csv())
-      .on("data", (data) => results.push(data))
-      .on("end", () => {
-        stopTimes = results;
-        console.log("stop_times caricati:", stopTimes.length);
-        resolve();
-      });
-  });
-}
+  if (!Array.isArray(data) || data.length === 0) return null;
 
-// 📥 carica trips
-function loadTrips() {
-  return new Promise((resolve) => {
-    const results = [];
-
-    fs.createReadStream("./gtfs/trips.txt")
-      .pipe(csv())
-      .on("data", (data) => results.push(data))
-      .on("end", () => {
-        trips = results;
-        console.log("trips caricati:", trips.length);
-        resolve();
-      });
-  });
-}
-
-// 🧠 converte orario GTFS → minuti (gestisce oltre 24h)
-function timeToMinutes(gtfsTime) {
-  const [h, m] = gtfsTime.split(":").map(Number);
-
-  return (h % 24) * 60 + m + (h >= 24 ? 1440 : 0);
-}
-
-// 🧠 trova prossimo treno
-function getNextTrain() {
   const now = new Date(
     new Date().toLocaleString("it-IT", { timeZone: "Europe/Rome" })
   );
 
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const current = now.getHours() * 60 + now.getMinutes();
 
-  const list = stopTimes
-    .filter((s) => s.stop_id === STOP_ID && s.arrival_time)
-    .map((s) => {
-      const [h, m] = s.arrival_time.split(":").map(Number);
+  const parsed = data
+    .map(t => {
+      const time = t.orarioPartenza || t.oraPartenza || t.orario;
 
-      let minutes = h * 60 + m;
+      if (!time) return null;
 
-      // GTFS dopo mezzanotte
-      if (h >= 24) {
-        minutes = (h - 24) * 60 + m + 1440;
-      }
+      const [h, m] = time.split(":").map(Number);
 
       return {
-        time: s.arrival_time,
-        minutes,
-        trip_id: s.trip_id
+        time,
+        minutes: h * 60 + m,
+        numeroTreno: t.numeroTreno,
+        ritardo: t.ritardo || 0,
+        destinazione: t.destinazione
       };
     })
+    .filter(Boolean)
+    .filter(t => t.minutes >= current)
     .sort((a, b) => a.minutes - b.minutes);
 
-  // 🔥 PRIMA scelta: futuro
-  let next = list.find(t => t.minutes >= currentMinutes);
-
-  // 🔥 FALLBACK: se non trova → primo disponibile (oggi o ciclo)
-  if (!next) {
-    next = list[0];
-  }
-
-  return next;
+  return parsed[0] || null;
 }
 
-// 🔍 estrai numero treno da headsign
-function extractTrainNumber(tripInfo) {
-  if (!tripInfo || !tripInfo.trip_headsign) return null;
-
-  const match = tripInfo.trip_headsign.match(/(\d+)/);
-  return match ? match[1] : null;
-}
-
-// ⏱️ recupera ritardo reale
-async function getDelay(numeroTreno) {
-  try {
-    if (!numeroTreno) return 0;
-
-    const response = await axios.get(
-      `http://www.viaggiatreno.it/infomobilita/resteasy/viaggiatreno/cercaNumeroTreno/${numeroTreno}`,
-      { timeout: 8000 }
-    );
-
-    const data = response.data;
-
-    if (!data || !data.ritardo) return 0;
-
-    return data.ritardo;
-
-  } catch (err) {
-    console.log("Errore ritardo:", err.message);
-    return 0;
-  }
-}
-
-// 🚆 endpoint principale
+// 🚆 API
 app.get("/treno", async (req, res) => {
   try {
-    const next = getNextTrain();
+    const next = await getNextTrain();
 
     if (!next) {
       return res.json({
-        speech: "Non ci sono più treni per Milano oggi"
+        speech: "Non ci sono treni disponibili al momento"
       });
     }
 
-    const tripInfo = trips.find(t => t.trip_id === next.trip_id);
+    let speech = `Il prossimo treno per Milano parte alle ${next.time}`;
 
-    const numeroTreno = extractTrainNumber(tripInfo);
-
-    console.log("Trip ID:", next.trip_id);
-    console.log("Numero treno:", numeroTreno);
-
-    const ritardo = await getDelay(numeroTreno);
-
-    let frase = `Il prossimo treno per Milano parte alle ${next.time}`;
-
-    if (ritardo === 0) {
-      frase += " ed è in orario";
+    if (!next.ritardo || next.ritardo === 0) {
+      speech += " ed è in orario";
     } else {
-      frase += ` ed ha ${ritardo} minuti di ritardo`;
+      speech += ` ed ha ${next.ritardo} minuti di ritardo`;
     }
 
-    return res.json({ speech: frase });
+    return res.json({ speech });
 
   } catch (err) {
-    console.error("Errore:", err);
+    console.log(err.message);
 
     return res.json({
-      speech: "Errore nel recupero dei dati"
+      speech: "Errore nel recupero dati treni"
     });
   }
 });
 
-// 🧪 test base
 app.get("/", (req, res) => {
   res.send("API treni reale attiva 🚆");
 });
 
-// 🚀 avvio server
-Promise.all([loadStopTimes(), loadTrips()]).then(() => {
-  app.listen(PORT, () => {
-    console.log("Server attivo su porta " + PORT);
-  });
+app.listen(PORT, () => {
+  console.log("Server attivo su porta " + PORT);
 });
